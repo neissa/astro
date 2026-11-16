@@ -7,6 +7,7 @@ Remplaçant du cron « ClearOutside Saucats » qui tournait sur neissa.org : cha
 | Capture | image maison `screenshot` (Debian jessie + PhantomJS 2.1.1, abandonné) | [Gotenberg](https://gotenberg.dev) `gotenberg/gotenberg:9` (Chromium à jour, maintenu) |
 | Cadrage | 1200×560 px à partir de y=450 (coordonnées fixes) | le **même cadrage** 1200×560 px, ancré sur le bandeau « Est. Sky Quality » au lieu d'une coordonnée fixe ; repli automatique sur le bloc complet du jour si le site change |
 | Planification | crontab root du serveur | `crond` dans `curlimages/curl`, intégré au compose |
+| Ressources | conteneur lancé à chaque capture (`docker run --rm`) | Gotenberg **arrêté en temps normal** : démarré pour la capture (≈ 10 s), puis arrêté ; seul le petit conteneur `curl` reste allumé |
 | Envoi Discord | `curl` | `curl` (identique) |
 
 Aucun code à compiler : deux images publiques et un script `sh`.
@@ -25,6 +26,8 @@ docker compose up -d
 Pour mettre à jour : `git pull`, puis `docker compose restart planificateur`.
 
 Crée `.env` **avant** `docker compose up`, sinon Docker crée un dossier `.env` vide à sa place.
+
+Juste après `up`, le planificateur arrête Gotenberg : `docker compose ps -a` le montre alors *exited*, c'est normal. À chaque capture, le script le démarre via l'API Docker, attend qu'il réponde, capture, puis l'arrête, même en cas d'erreur.
 
 ## Tester tout de suite
 
@@ -52,3 +55,5 @@ docker compose logs -f planificateur
 ## Sécurité
 
 `.env` contient l'URL du webhook, qui suffit pour poster dans le salon. Ne le committe pas, et régénère le webhook dans Discord si l'URL a fuité. Gotenberg n'expose aucun port sur l'hôte : seul le planificateur y accède, par le réseau interne du compose.
+
+Pour démarrer et arrêter Gotenberg, le planificateur a accès au socket Docker (`/var/run/docker.sock`), ce qui équivaut à un accès root à l'hôte. Il n'appelle que `start` et `stop` sur le conteneur `clearoutside-gotenberg`, et l'image `curlimages/curl` est officielle. Si tu préfères garder Gotenberg allumé en permanence, retire cette ligne de `compose.yaml` et remets `restart: unless-stopped` sur `gotenberg` : le script détecte l'absence du socket et ne touche plus au conteneur.

@@ -1,6 +1,9 @@
 #!/bin/sh
 # Capture la prévision ClearOutside et la poste sur un webhook Discord.
 # Remplace docker-screenshot (PhantomJS) de neissa.org : la capture est faite par Gotenberg (Chromium).
+# Gotenberg reste arrêté entre deux captures : ce script le démarre, s'en sert, puis l'arrête.
+#   sh clearoutside.sh                      capture + envoi
+#   sh clearoutside.sh --arreter-gotenberg  arrête juste Gotenberg (utilisé au démarrage du planificateur)
 set -eu
 
 ICI=$(cd "$(dirname "$0")" && pwd)
@@ -13,6 +16,45 @@ SORTIE="${SORTIE:-/tmp/clearoutside.png}"
 # origine : le cadrage de neissa.org, 1200×560 px à partir du bandeau « Est. Sky Quality »
 # jour    : le bloc complet du jour (toutes les lignes, du nuage à l'ozone)
 CADRAGE="${CADRAGE:-origine}"
+# Conteneur Gotenberg à démarrer/arrêter via l'API Docker (socket monté par compose.yaml).
+# Vide, ou socket absent : Gotenberg est supposé déjà lancé et n'est pas touché.
+GOTENBERG_CONTAINER="${GOTENBERG_CONTAINER:-}"
+DOCKER_SOCK="${DOCKER_SOCK:-/var/run/docker.sock}"
+
+pilotage_actif() { [ -n "$GOTENBERG_CONTAINER" ] && [ -S "$DOCKER_SOCK" ]; }
+
+docker_api() { # $1 = start | stop ; affiche le code HTTP (204 = fait, 304 = déjà dans cet état)
+  curl -s --unix-socket "$DOCKER_SOCK" -o /dev/null -w '%{http_code}' -X POST \
+    "http://localhost/containers/$GOTENBERG_CONTAINER/$1" || true
+}
+
+demarrer_gotenberg() {
+  pilotage_actif || return 0
+  code=$(docker_api start)
+  case "$code" in 204|304) ;; *) echo "Démarrage de Gotenberg impossible (API Docker : HTTP $code)"; return 1 ;; esac
+  i=0
+  until curl -sf --max-time 2 -o /dev/null "$GOTENBERG_URL/health"; do
+    i=$((i + 1))
+    [ "$i" -lt 60 ] || { echo "Gotenberg ne répond pas après 60 s"; return 1; }
+    sleep 1
+  done
+  echo "Gotenberg démarré (prêt en ${i} s)"
+}
+
+arreter_gotenberg() {
+  pilotage_actif || return 0
+  code=$(docker_api stop)
+  case "$code" in
+    204) echo "Gotenberg arrêté" ;;
+    304) ;;
+    *) echo "Arrêt de Gotenberg impossible (API Docker : HTTP $code)" ;;
+  esac
+}
+
+if [ "${1:-}" = "--arreter-gotenberg" ]; then
+  arreter_gotenberg
+  exit 0
+fi
 
 # Gotenberg ne sait découper que la boîte d'un élément. Pour retrouver le cadrage d'origine, on injecte
 # un cadre invisible de 1200×560 px, centré sur la page et ancré 3 px au-dessus du bandeau « Sky Quality » :
@@ -42,6 +84,10 @@ capture() { # $1 = sélecteur CSS de la zone à capturer
     "$GOTENBERG_URL/forms/chromium/screenshot/url"
 }
 
+# Quoi qu'il arrive (succès, erreur, interruption), Gotenberg est arrêté en sortie.
+trap arreter_gotenberg EXIT
+demarrer_gotenberg
+
 echo "$(date '+%F %T') capture de $CLEAROUTSIDE_URL (cadrage $CADRAGE)"
 if [ "$CADRAGE" = "jour" ]; then
   capture '#day_0'
@@ -50,6 +96,10 @@ elif ! capture '#cadre-origine'; then
   echo "Repli sur le bloc du jour."
   capture '#day_0'
 fi
+
+# La capture est faite : inutile de garder Gotenberg pendant l'envoi Discord.
+arreter_gotenberg
+trap - EXIT
 
 if [ -z "${DISCORD_WEBHOOK_URL:-}" ]; then
   echo "DISCORD_WEBHOOK_URL vide : image enregistrée dans $SORTIE, rien n'est envoyé."

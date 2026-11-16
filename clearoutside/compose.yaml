@@ -3,18 +3,28 @@
 services:
   gotenberg:
     image: gotenberg/gotenberg:9          # Chromium headless + API de capture d'écran
-    restart: unless-stopped
+    container_name: clearoutside-gotenberg
+    restart: "no"                         # arrêté en temps normal : le planificateur le démarre pour chaque capture, puis l'arrête
 
   planificateur:
     image: curlimages/curl:8.23.0         # curl + crond (busybox), rien d'autre
     restart: unless-stopped
-    user: root                            # crond doit tourner en root
+    user: root                            # crond et l'accès au socket Docker demandent root
     depends_on: [gotenberg]
     environment:
       GOTENBERG_URL: http://gotenberg:3000
+      GOTENBERG_CONTAINER: clearoutside-gotenberg
       TZ: CET-1CEST,M3.5.0,M10.5.0/3      # heure de Paris (format POSIX : l'image n'a pas tzdata)
     volumes:
       - ./clearoutside.sh:/app/clearoutside.sh:ro
       - ./.env:/app/.env:ro               # contient DISCORD_WEBHOOK_URL
-    # Vendredi et samedi à 16:00, heure de Paris, comme l'ancien cron
-    entrypoint: ["sh", "-c", "echo '0 16 * * 5,6 sh /app/clearoutside.sh' > /etc/crontabs/root && exec crond -f -l 6"]
+      - /var/run/docker.sock:/var/run/docker.sock   # pour démarrer/arrêter Gotenberg
+    # Au démarrage : arrête Gotenberg (lancé par « docker compose up »), puis
+    # vendredi et samedi à 16:00, heure de Paris, comme l'ancien cron.
+    entrypoint:
+      - sh
+      - -c
+      - |
+        sh /app/clearoutside.sh --arreter-gotenberg
+        echo '0 16 * * 5,6 sh /app/clearoutside.sh' > /etc/crontabs/root
+        exec crond -f -l 6
