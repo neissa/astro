@@ -8,7 +8,7 @@ Remplaçant du cron « ClearOutside Saucats » qui tournait sur neissa.org : cha
 | Cadrage | 1200×560 px à partir de y=450 (coordonnées fixes) | le **même cadrage** 1200×560 px, ancré sur le bandeau « Est. Sky Quality » au lieu d'une coordonnée fixe ; repli automatique sur le bloc complet du jour si le site change |
 | Planification | crontab root du serveur | `crond` dans `python:3.13-alpine`, intégré au compose |
 | Ressources | conteneur lancé à chaque capture (`docker run --rm`) | Chrome **arrêté en temps normal** : démarré pour la capture (≈ 5 s), puis arrêté ; seul le petit conteneur Python reste allumé |
-| Disque | — | ≈ 615 Mo d'images (Chrome ≈ 545 Mo + Python ≈ 70 Mo) |
+| Disque / RAM | — | ≈ 615 Mo sur disque ; RAM < 1 Mo au repos, ≈ 175 Mo pendant les ~6 s de capture (voir [Ressources](#ressources)) |
 | Envoi Discord | `curl` | Python (`urllib`) |
 
 Aucun code à compiler ni dépendance à installer : deux images publiques et un script Python qui n'utilise que la bibliothèque standard.
@@ -51,6 +51,21 @@ Pour juste générer l'image sans rien poster, laisse `DISCORD_WEBHOOK_URL` vide
 ```bash
 docker compose logs -f planificateur
 ```
+
+## Ressources
+
+Mesuré avec `docker stats` et `docker system df` (amd64, Chrome 159) :
+
+| | Disque | RAM au repos | RAM pendant une capture (~6 s) |
+|---|---|---|---|
+| `chrome` (`chromedp/headless-shell:stable`) | 543 Mo | 0 (arrêté) | ≈ 160 Mo (pic) |
+| `planificateur` (`python:3.13-alpine`) | 71 Mo | < 1 Mo (`crond` seul) | ≈ 15 Mo (pic) |
+| Conteneurs (couches modifiables) | ≈ 2 Mo | | |
+| **Total** | **≈ 615 Mo** | **< 1 Mo** | **≈ 175 Mo** |
+
+Le téléchargement initial est plus léger (images compressées : ≈ 160 Mo pour Chrome). Pour vérifier sur ta machine : `docker system df -v` et, pendant un test, `docker stats`.
+
+Les journaux Docker (`docker compose logs`) grossissent de quelques lignes par capture ; rien d'autre n'est écrit sur le disque (l'image capturée reste dans `/tmp` du conteneur et est écrasée à chaque fois).
 
 ## Réglages
 
